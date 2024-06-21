@@ -1,14 +1,18 @@
 from datetime import timedelta, datetime
+import hashlib
 from http import HTTPStatus
 from typing import List
+import uuid
 
 import aiohttp
 from aiohttp import ClientResponseError, ClientResponse
 
 from evdutyapi import Station
 from evdutyapi.api_response.charging_session_response import ChargingSessionResponse
+from evdutyapi.api_response.session_start_response import SessionStartResponse
 from evdutyapi.api_response.station_response import StationResponse
 from evdutyapi.api_response.terminal_details_response import TerminalDetailsResponse
+from evdutyapi.charging_session import ChargingSession
 
 
 class EVDutyApiError(ClientResponseError):
@@ -73,6 +77,36 @@ class EVDutyApi:
                     if await response.text() != '':
                         json_session = await response.json()
                         terminal.session = ChargingSessionResponse.from_json(json_session)
+
+    async def _async_start_session(self, station: Station, targetDuration: int, targetPercentage: float) -> SessionStartResponse:
+        await self.async_authenticate()
+
+        firstTerminal = station.terminals[0]
+        stationInfo = {"hasPlans":False, 
+                        "id": station.id,
+                        "isOwner":station.isOwner,
+                        "isPartialOwner":station.isPartialOwner,
+                        "isRoot":station.isRoot,
+                        "levels":[],
+                        "links":[],
+                        "status":"unknown",
+                        "terminal":{"connector":{"id":firstTerminal.connectors[0].id},
+                        "id": firstTerminal.id},
+                        "terminals":[]}
+        
+        async with self.session.post(f'{self.base_url}/v1/sessions/start', json={
+            'etag': hashlib.sha256(str(uuid.uuid4()).encode('utf-8')),
+            "duration":0.0,
+            "station": stationInfo ,
+            "targetDuration":targetDuration,
+            "targetPercentage":targetPercentage,
+            "terminalStatus":{},
+            "timeRemaining":0.0
+            
+            },
+            headers=self.headers) as response:
+                await self._raise_on_get_error(response)
+                return await response.json()
 
     async def _raise_on_get_error(self, response: ClientResponse):
         if response.status == HTTPStatus.UNAUTHORIZED:
